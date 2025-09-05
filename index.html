@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>⚡ Aadhaar ID Card Maker ⚡</title>
+
+  <!-- pdf.js and jsPDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
+
+  <style>
+    :root{--green:#00ff66;--bg:#000;--card-bg:rgba(0,0,0,0.85)}
+    body{
+      margin:0;font-family:"Courier New",monospace;background-color:var(--bg);
+      color:var(--green);display:flex;flex-direction:column;align-items:center;
+      padding:20px;min-height:100vh;
+    }
+    h1{font-size:2rem;margin-bottom:18px;text-shadow:0 0 10px var(--green),0 0 20px var(--green);text-align:center;}
+    .card{
+      background:var(--card-bg);border:2px solid var(--green);border-radius:12px;
+      padding:20px;width:100%;max-width:720px;box-shadow:0 0 15px var(--green);
+    }
+    label{display:block;font-weight:bold;margin-bottom:8px;}
+    input[type=file], input[type=password], button{
+      width:100%;padding:10px;border-radius:8px;border:2px solid var(--green);
+      background:var(--bg);color:var(--green);font-size:1rem;margin-bottom:12px;
+    }
+    button{cursor:pointer;font-weight:bold;transition:0.2s}
+    button:hover{background:var(--green);color:var(--bg)}
+    #pdfPreviewCanvas, #croppedCanvas{
+      display:block;margin:12px auto;border:2px solid var(--green);border-radius:10px;
+      max-width:100%;
+    }
+    .controls{display:flex;gap:10px;flex-wrap:wrap}
+    .small{width:48%}
+    .footer{margin-top:auto;text-align:center;font-size:0.9rem;color:#00aa44;margin-top:12px}
+    .hidden{display:none}
+    .loader{color:var(--green);font-weight:bold;margin:6px 0}
+  </style>
+</head>
+<body>
+  <h1>⚡ Aadhaar ID Card Maker ⚡</h1>
+
+  <div class="card">
+    <label>Upload Your Aadhaar PDF</label>
+    <input id="pdfFile" type="file" accept="application/pdf">
+
+    <button id="btnProceed">🚀 Proceed</button>
+
+    <div id="loader" class="loader hidden">⚡... Scanning PDF... ⚡</div>
+
+    <div id="passwordArea" class="hidden">
+      <label>Enter PDF password</label>
+      <input id="pdfPassword" type="password" placeholder="Password if required">
+      <button id="btnSubmitPass">Unlock PDF</button>
+    </div>
+
+    <canvas id="pdfPreviewCanvas" class="hidden"></canvas>
+
+    <div id="generateArea" class="hidden" style="margin-top:10px">
+      <button id="btnGenerate">🆔 Generate Aadhaar ID</button>
+    </div>
+
+    <div id="resultArea" class="hidden">
+      <h3 style="color:var(--green); text-align:center">Cropped Preview</h3>
+      <canvas id="croppedCanvas"></canvas>
+
+      <div style="margin-top:12px" class="controls">
+        <button onclick="downloadPNG()" class="small">📥 Download PNG</button>
+        <button onclick="downloadJPG()" class="small">📥 Download JPG</button>
+        <button onclick="downloadPDF()" class="small">📥 Download PDF</button>
+        <button onclick="printCropped()" class="small">🖨️ Print</button>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="footer">© 2025 |powerd by BAPON BARMON</div>
+
+<script>
+(async ()=>{
+
+  const pdfFileInput = document.getElementById('pdfFile');
+  const btnProceed = document.getElementById('btnProceed');
+  const loader = document.getElementById('loader');
+  const passwordArea = document.getElementById('passwordArea');
+  const pdfPasswordInput = document.getElementById('pdfPassword');
+  const btnSubmitPass = document.getElementById('btnSubmitPass');
+  const pdfPreviewCanvas = document.getElementById('pdfPreviewCanvas');
+  const btnGenerate = document.getElementById('btnGenerate');
+  const generateArea = document.getElementById('generateArea');
+  const resultArea = document.getElementById('resultArea');
+  const croppedCanvas = document.getElementById('croppedCanvas');
+
+  let pdfFile = null;
+  let pdfDoc = null;
+  let renderedScale = 1.5;
+  let lastViewport = null;
+
+  // ✅ PERFECT CROP: Aadhaar Card front + back with exact borders
+  const CROP = {
+    xPct: 0.025,   // left edge
+    yPct: 0.60,    // start from 60% down the page
+    wPct: 0.95,    // almost full width
+    hPct: 0.37     // bottom 37% for front + back
+  };
+
+  pdfFileInput.addEventListener('change', ()=> { pdfFile = pdfFileInput.files[0] || null; });
+
+  btnProceed.addEventListener('click', async ()=>{
+    if(!pdfFile){ alert("⚠️ Please upload an Aadhaar PDF first."); return; }
+    loader.classList.remove('hidden');
+    await new Promise(r=>setTimeout(r,2000));
+    try {
+      await loadPdfDocument();
+      loader.classList.add('hidden');
+      await renderPdfFirstPage();
+      passwordArea.classList.add('hidden');
+      generateArea.classList.remove('hidden');
+    } catch(err){
+      loader.classList.add('hidden');
+      if(err && err.name === 'PasswordException'){ passwordArea.classList.remove('hidden'); }
+      else { console.error(err); alert("❌ Failed to load PDF."); }
+    }
+  });
+
+  btnSubmitPass.addEventListener('click', async ()=>{
+    if(!pdfFile) return;
+    loader.classList.remove('hidden');
+    await new Promise(r=>setTimeout(r,500));
+    try {
+      await loadPdfDocument(pdfPasswordInput.value);
+      loader.classList.add('hidden');
+      passwordArea.classList.add('hidden');
+      await renderPdfFirstPage();
+      generateArea.classList.remove('hidden');
+    } catch(err){
+      loader.classList.add('hidden');
+      if(err && err.name === 'PasswordException'){ alert("❌ Wrong password, try again."); }
+      else { console.error(err); alert("❌ Cannot open PDF."); }
+    }
+  });
+
+  async function loadPdfDocument(password){
+    const arrayBuffer = await pdfFile.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, password: password || undefined, verbosity: 0 });
+    pdfDoc = await loadingTask.promise;
+  }
+
+  async function renderPdfFirstPage(){
+    const page = await pdfDoc.getPage(1);
+    const viewport = page.getViewport({ scale: renderedScale });
+    lastViewport = viewport;
+    const ctx = pdfPreviewCanvas.getContext('2d');
+    pdfPreviewCanvas.width = viewport.width;
+    pdfPreviewCanvas.height = viewport.height;
+    pdfPreviewCanvas.classList.remove('hidden');
+    ctx.clearRect(0,0,pdfPreviewCanvas.width,pdfPreviewCanvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+  }
+
+  btnGenerate.addEventListener('click', ()=>{
+    if(!pdfPreviewCanvas || !lastViewport) return alert("Load PDF first.");
+    const pageW = pdfPreviewCanvas.width;
+    const pageH = pdfPreviewCanvas.height;
+    const rect = {
+      x: Math.round(CROP.xPct * pageW),
+      y: Math.round(CROP.yPct * pageH),
+      w: Math.round(CROP.wPct * pageW),
+      h: Math.round(CROP.hPct * pageH)
+    };
+    croppedCanvas.width = rect.w;
+    croppedCanvas.height = rect.h;
+    const cctx = croppedCanvas.getContext('2d');
+    cctx.imageSmoothingEnabled = true;
+    cctx.imageSmoothingQuality = 'high';
+    cctx.clearRect(0,0,rect.w,rect.h);
+    cctx.drawImage(pdfPreviewCanvas, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+    resultArea.classList.remove('hidden');
+    croppedCanvas.scrollIntoView({behavior:'smooth', block:'center'});
+  });
+
+  window.downloadPNG = function(){
+    if(!croppedCanvas.width) return alert("Generate first.");
+    const link = document.createElement('a');
+    link.href = croppedCanvas.toDataURL('image/png', 1.0);
+    link.download = 'aadhaar-cropped.png';
+    document.body.appendChild(link); link.click(); link.remove();
+  };
+
+  window.downloadJPG = function(){
+    if(!croppedCanvas.width) return alert("Generate first.");
+    const tmp = document.createElement('canvas');
+    tmp.width = croppedCanvas.width; tmp.height = croppedCanvas.height;
+    const tctx = tmp.getContext('2d');
+    tctx.fillStyle = "#ffffff"; tctx.fillRect(0,0,tmp.width,tmp.height);
+    tctx.drawImage(croppedCanvas,0,0);
+    const link = document.createElement('a');
+    link.href = tmp.toDataURL('image/jpeg', 1.0);
+    link.download = 'aadhaar-cropped.jpg';
+    document.body.appendChild(link); link.click(); link.remove();
+  };
+
+  window.downloadPDF = function(){
+    if(!croppedCanvas.width) return alert("Generate first.");
+    const imgData = croppedCanvas.toDataURL('image/png');
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({unit:'pt',format:'a4'});
+    const pageW = pdf.internal.pageSize.getWidth();
+    const margin = 20;
+    const imgW = pageW - margin*2;
+    const imgH = (croppedCanvas.height * imgW) / croppedCanvas.width;
+    pdf.addImage(imgData, 'PNG', margin, 40, imgW, imgH);
+    pdf.save('aadhaar-cropped.pdf');
+  };
+
+  window.printCropped = function(){
+    if(!croppedCanvas.width) return alert("Generate first.");
+    const dataUrl = croppedCanvas.toDataURL('image/png');
+    const w = window.open('', '_blank');
+    w.document.write(`<img src="${dataUrl}" style="width:100%;max-width:800px">`);
+    w.document.close();
+    w.focus();
+    w.onload = ()=> { w.print(); };
+  };
+
+})();
+</script>
+</body>
+</html>
